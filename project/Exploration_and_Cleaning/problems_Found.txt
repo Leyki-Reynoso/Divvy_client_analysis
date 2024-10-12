@@ -1,0 +1,7 @@
+-     misssing values on start_station_name, start_station_id, end_station_name and end_station_id.
+-     missing values on end_lat, and end_lng
+-     There are 6 categorical columns, rideable_type, and menber_casual, start_station_name/id, and end_station_name/id
+-     issue with end_lat were it has a minimun 0.00 and end_lng with a max of 0.00
+-     end_lng and end_lat seem to have outliers
+-     docked bikes need to be classic, but keep them docked in case there is some important pattern to find.
+-     Some trips have duration a negative duration.

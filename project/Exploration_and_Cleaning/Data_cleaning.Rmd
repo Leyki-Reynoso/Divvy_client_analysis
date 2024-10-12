@@ -1,0 +1,418 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+```{r}
+library(corrplot)
+library(tidyverse)
+library(ggplot2)
+library(maps)
+library(ggmap)
+library(ggplot2)
+library(tmap)
+library(geosphere)
+library(sf)
+```
+
+
+```{r}
+trips_df <- read_csv("../data/trips_data.csv")
+```
+
+
+
+#dealing with the docked_bike issue
+
+Docked_bike types are supposed to be classic_bike types
+
+```{r}
+trips_df <- trips_df %>%
+  mutate(rideable_type = ifelse(rideable_type == "docked_bike",
+                                "classic_bike", rideable_type))
+```
+
+```{r}
+unique(trips_df$rideable_type)
+```
+
+#Fixing end_lng and end_lat problems
+
+there are 2 problems found. One being 0 values on some of the rows and another being the missing values on some of the rows. Lastly there seem to be Outliers on the histograms(This could be the 0's but I don't know yet.)
+
+##dealing with the 0's
+
+```{r}
+trips_df %>%
+  select(everything()) %>%
+  filter(end_lng == 0 | end_lat == 0)
+```
+There are only 3 values that have 0 and in both cases this occurs on end_lng and end_lat at the same time. 2 of them are tests and one isn't. I will convert the 0's into an NA value and deal with it together with the other missing values. 
+```{r}
+trips_df <- trips_df %>%
+  mutate(end_lng = na_if(end_lng, 0),
+         end_lat = na_if(end_lat, 0))
+  trips_df %>%
+    select(everything()) %>%
+    filter(end_lat == 0 | end_lng == 0 )
+```
+
+
+
+
+##Cleaning Test data
+
+I want to make sure that there are no more tests outside of the 2 I just found.
+```{r}
+trips_df %>%
+  select(everything()) %>%
+  filter(grepl("(Test)$", end_station_name, ignore.case=TRUE) | grepl("(Test)$", start_station_name, ignore.case=TRUE) |  grepl("(Test)$", start_station_id, ignore.case=TRUE) |  grepl("(Test)$", start_station_id, ignore.case=TRUE))
+```
+There are more. This data doesn't serve us since they are tests.
+```{r}
+trips_df <- trips_df %>%
+  select(everything()) %>%
+  filter(!(grepl("(Test)$", end_station_name, ignore.case=TRUE) | grepl("(Test)$", start_station_name, ignore.case=TRUE) |  grepl("(Test)$", start_station_id, ignore.case=TRUE) |  grepl("(Test)$", start_station_id, ignore.case=TRUE)))
+```
+
+```{r}
+trips_df %>%
+  select(everything()) %>%
+  filter(grepl("(Test)$", end_station_name, ignore.case=TRUE) | grepl("(Test)$", start_station_name, ignore.case=TRUE) |  grepl("(Test)$", start_station_id, ignore.case=TRUE) |  grepl("(Test)$", start_station_id, ignore.case=TRUE)) %>%
+  count()
+```
+The data is now cleaned of tests.
+
+#Fixing the outliers
+
+I want to now see if removing the 0's from the data removed the outliers.
+```{r}
+ggplot(trips_df, aes(x = end_lat)) +
+    geom_histogram(fill = "blue", color = "black") +
+    labs(title = "Frequency Distribution of end_lat", x = "end_lat", y = "Frequency")
+
+ggplot(trips_df, aes(x = end_lng)) +
+    geom_histogram(fill = "blue", color = "black") +
+    labs(title = "Frequency Distribution of end_lng", x = "end_lng", y = "Frequency")
+```
+The only outliers where the 0's so I can move on to the next step now.
+
+#Dealing with the missing end_lng and end_lat
+
+I know that they are both missing at the same time. Lets see if we can find a pattern. to it
+```{r}
+missing_lng_lat <- trips_df %>%
+  select(everything()) %>%
+  filter(!complete.cases(end_lng))
+
+missing_lng_lat %>% count()
+
+missing_lng_lat %>%
+  select(everything())
+```
+
+A lot of the data seems to also have missing end station names. I also don't see any electric bikes on the type of bike.
+
+Are dates related?
+```{r}
+ggplot(missing_lng_lat, aes(x = started_at)) +
+    geom_histogram(fill = "blue", color = "black") +
+    labs(title = "Frequency Distribution of started_at", x = "started_at", y = "Frequency")
+
+ggplot(missing_lng_lat, aes(x = ended_at)) +
+    geom_histogram(fill = "blue", color = "black") +
+    labs(title = "Frequency Distribution of ended_at", x = "ended_at", y = "Frequency")
+```
+The dates have the same spread as the full dataset.
+
+```{r}
+ggplot(missing_lng_lat, aes(x = rideable_type)) +
+    geom_bar(fill = "skyblue", color = "black") +
+    labs(title = "Frequency of rideable_type Categories", x = "rideable_type", y = "Count")
+
+ggplot(missing_lng_lat, aes(x = member_casual)) +
+    geom_bar(fill = "skyblue", color = "black") +
+    labs(title = "Frequency of member_casual Categories", x = "member_casual", y = "Count")
+```
+There are no electric bikes on the subset at all. There also are more casuals than members. This is weird because there are almost double the members on the data.
+
+My current hypothesis is that this bikes were lost/stolen. And since the classic bikes have no tracker there would be no longitude, lattitude. couple that with the fact that there are probably more casual drivers without the gps tracker on on their phones making it the reason why there are not that many members with missnig end_lng and end_lat. since that is how those values are obtained when the driver uses a classic bike.
+
+
+
+```{r}
+missing_lng_lat_with_durations <- missing_lng_lat %>%
+  select(everything()) %>%
+  mutate(trip_duration = as.numeric(difftime(ended_at, started_at), units = "hours"))
+```
+
+```{r}
+missing_lng_lat_with_durations %>%
+  select(everything())
+```
+
+```{r}
+summary(missing_lng_lat_with_durations$trip_duration)
+```
+For some reason there are huge outliers with some trips lasting thousands of hours. However if those outliers are removed most of the data ends up being 4 hours. As per [divvy rules](https://help.divvybikes.com/hc/en-us/articles/360033123412-My-bike-was-lost-or-stolen) a trip cannot last longer than 24 hours so I will limit the search to that time.
+
+```{r}
+missing_lng_lat_with_durations %>%
+  select(everything()) %>%
+  filter(trip_duration < 23)
+
+missing_lng_lat_with_durations %>%
+  select(everything()) %>%
+  filter(trip_duration >= 23)
+
+```
+
+```{r}
+missing_lng_lat_with_durations %>%
+  filter(trip_duration < 23 & complete.cases(end_station_name)) %>%
+  count()
+
+missing_lng_lat_with_durations %>%
+  filter(trip_duration >= 23 & complete.cases(end_station_name)) %>%
+  count()
+```
+Most of this data is greater than or equal to 24 which shows me that the great majority are lost bikes. So to clean this data I will do the following:
+
+If the trips is longer than or equal 23 hours it will be marked as Lost/Stolen.
+
+If the trips is shorter than 23 hours. It will be deleted. Unless the trip has an end_station_name. In which case I will use the median lng and lat of the the trips with the same station to fill out the end_lng and end_lat variables.
+
+```{r}
+short_trips_to_remove_list <- missing_lng_lat_with_durations %>%
+  filter(trip_duration < 23 & !complete.cases(end_station_name)) %>%
+  pull(ride_id)
+
+
+short_trips_to_fix_list <- missing_lng_lat_with_durations %>%
+  filter(trip_duration < 23 & complete.cases(end_station_name)) %>%
+  pull(ride_id)
+
+lost_bikes_list <- missing_lng_lat_with_durations %>%
+  filter(trip_duration > 23) %>%
+    pull(ride_id)
+
+trips_df <- trips_df %>%
+  mutate(
+    end_station_name = ifelse(ride_id %in% lost_bikes_list, "Lost",end_station_name),
+    end_station_id = ifelse(ride_id %in% lost_bikes_list, "Lost",end_station_id),
+  )
+trips_df <- trips_df %>%
+  filter(!(ride_id %in% short_trips_to_remove_list))
+
+
+median_df <- trips_df %>%
+  group_by(end_station_name) %>%
+  summarize(median_end_lng = median(end_lng, na.rm = TRUE),
+            median_end_lat = median(end_lat, na.rm = TRUE)
+            )
+
+
+trips_df <- trips_df %>%
+    left_join(median_df, by = "end_station_name") %>%
+    mutate(end_lng = ifelse(!complete.cases(end_lng) | (ride_id %in% short_trips_to_fix_list), median_end_lng, end_lng),
+           end_lat = ifelse(!complete.cases(end_lat) | (ride_id %in% short_trips_to_fix_list), median_end_lat, end_lat)) %>%
+    select(-median_end_lng, -median_end_lat)
+
+```
+
+
+```{r}
+trips_df %>%
+  filter(!complete.cases(end_lat, end_lng) & end_station_name != "Lost") %>%
+  count()
+```
+The end_lng and end_lat will both still have Na's But only on the trips that are marked as lost. I don't want to mark end_lng/lat as lost since that will cause the whole column to become character type instead of a numeric type.
+
+#mising data on names and ids
+
+"You can either dock or lock your ebike (not both at once). Dock at any Divvy station, or use the cable to lock at any e-station or at the 500+ Divvy approved public bike racks for no additional cost. For an extra $2.40 ($1.20 for Divvy members), you can also lock to any other public bike rack, light pole, signpost, or retired parking meter within the service area."
+[source](https://divvybikes.com/how-it-works/parking) 
+
+With this in mind this could be a good reason why there are so many start and end ids and names. Because some Ebikes can start and end a trip outside a station. I want to confirm this being looking at which types of bikes are missing its stations.
+```{r}
+missing_stations <- trips_df %>%
+  select(everything()) %>% 
+  filter(!complete.cases(start_station_id,end_station_id))
+
+missing_stations_with_duration <- missing_stations %>%
+  select(everything()) %>%
+  mutate(trip_duration = as.numeric(difftime(ended_at, started_at), units = "hours"))
+
+```
+ 
+```{r}
+ggplot(missing_stations, aes(x = rideable_type)) +
+    geom_bar(fill = "skyblue", color = "black") +
+    labs(title = "Frequency of rideable_type Categories", x = "rideable_type", y = "Count")
+```
+
+The great majority are electric and rarely they are 24.Now how many electric bike trips are 24 hours?
+```{r}
+missing_stations_with_duration %>% 
+  filter(rideable_type == "electric_bike", trip_duration > 23) %>% 
+  count()
+missing_stations_with_duration %>% 
+  filter(rideable_type == "classic_bike", trip_duration > 23) %>% 
+  count()
+```
+Which confirms that all bikes that all classic bikes which have missing stations are lost while electric ones aren't. I will now mark the bikes which started out of the staion as out of station. 
+
+```{r}
+trips_df <- trips_df %>%
+  mutate(start_station_name = ifelse(rideable_type == "electric_bike" & is.na(start_station_id), 
+                                   "Out of station", start_station_name))
+
+trips_df <- trips_df %>%
+  mutate(start_station_id = ifelse(rideable_type == "electric_bike" & is.na(start_station_id), 
+                                   "Out of station", start_station_id))
+
+trips_df <- trips_df %>%
+  mutate(end_station_name = ifelse(rideable_type == "electric_bike" & is.na(end_station_id), 
+                                   "Out of station", end_station_name))
+
+trips_df <- trips_df %>%
+  mutate(end_station_id = ifelse(rideable_type == "electric_bike" & is.na(end_station_id), 
+                                   "Out of station", end_station_id))
+```
+
+
+now lets deal with the classic bikes. first the ones lasting longer than 24 hours are lost/stolen so lets fix that.
+
+```{r}
+trips_df <- trips_df %>%
+  mutate(end_station_name = ifelse(rideable_type == "classic_bike" & is.na(end_station_id), 
+                                   "Lost", end_station_name))
+
+trips_df <- trips_df %>%
+  mutate(end_station_id = ifelse(rideable_type == "classic_bike" & is.na(end_station_id), 
+                                   "Lost", end_station_id))
+```
+
+```{r}
+trips_df %>% 
+  filter(!complete.cases(.) & end_station_id != "Lost") 
+```
+Because its only 6 rows of data and I don't know the reason why the stations are missing I will remove this rows.
+
+```{r}
+trips_df <- trips_df %>% 
+  filter(complete.cases(.) | end_station_id == "Lost") 
+```
+
+```{r}
+trips_df %>%  
+  select(everything()) %>% 
+  filter(!complete.cases(.) & end_station_id != "Lost") %>% 
+  count()
+```
+this section is done.
+
+
+
+#lattitude and longitude low accuracy.
+
+There are inconsistencies with decimal points on the latitude and longitude the decimal values go form 2 decimal places to up to 13. I would need at least 4 to have a somewhat accurate analysis since bellow 4 there is an error of 1.11 km. Which is more than enough to have more than one station at the same location. This canno't be changed but I will abstain myself from checking the distance between beginning and end.
+
+
+#Creating a new variable.
+
+
+```{r}
+trips_df %>%
+  select(everything()) 
+```
+
+I will need to new columns for the analysis trip_duration.
+```{r}
+trips_df <- trips_df %>%
+  select(everything()) %>%
+  mutate(trip_duration = as.numeric(difftime(ended_at, started_at), units = "mins"))
+```
+
+
+
+```{r}
+summary(trips_df$trip_duration)
+
+```
+There are negative values on the trip duration. as well as a maximum of 1641.4844 hours on a trip. As we discussed before any trip above 24 hours is already considered a lost so this should not be possible. For the distance there 0.0 distances traveled which maybe trips that were started and ended immediately but I need to check further. there also seems to be very big maximun distance. I will also need to check this further.
+
+Lets see how all of this problems look.
+```{r}
+ggplot(trips_df, aes(x = trip_duration)) +
+    geom_histogram(fill = "blue", color = "black") +
+    labs(title = "Frequency Distribution of trip_duration", x = "trip_duration", y = "Frequency")
+
+```
+I want to first explore the negative times. Which should not be possible.
+```{r}
+trips_df %>% count()
+```
+
+```{r}
+negative_trips <- trips_df %>% 
+  select(everything()) %>% 
+  filter(trip_duration <= 0) 
+```
+
+This data encompasses 0.0006% of the total 
+
+
+
+Next lets check the trip duration that are longer than 24 hours since this should not be possible. 
+```{r}
+Long_trips <- trips_df %>% 
+  select(everything()) %>% 
+  filter(trip_duration > 1440 & end_station_name != "Lost")
+```
+This encompasses 0.0008% of the data.
+
+This trips should not be possible, and due to them together en composing 0.001% of the data. I will delete them to avoid it from affecting the analysis.
+```{r}
+trips_df <- trips_df %>% 
+  select(everything()) %>% 
+  filter(!(trip_duration > 1440 & end_station_name != "Lost")) 
+
+trips_df <- trips_df %>% 
+  select(everything()) %>% 
+  filter(trip_duration > 0) 
+```
+
+
+
+
+#creating categorical columns
+
+rideable_type and member_casual, start_station_name, start_station_id, end_station_name, end_station_id are all categorical variables on the data set. I transform them into factors on the code bellow.
+```{r}
+trips_df$rideable_type <- as.factor(trips_df$rideable_type)
+class(trips_df$rideable_type)
+
+trips_df$member_casual <- as.factor(trips_df$member_casual)
+class(trips_df$rideable_type)
+
+trips_df$start_station_id <- as.factor(trips_df$start_station_id)
+class(trips_df$start_station_id)
+
+trips_df$start_station_name <- as.factor(trips_df$start_station_name)
+class(trips_df$start_station_name)
+
+trips_df$end_station_name <- as.factor(trips_df$end_station_name)
+class(trips_df$end_station_name)
+
+trips_df$end_station_id <- as.factor(trips_df$end_station_id)
+class(trips_df$end_station_id)
+```
+
+With this I conclude the cleaning.
+```{r}
+write.csv(trips_df, "../data/trips_data_cleaned.csv", row.names = FALSE)
+```
+
+
+

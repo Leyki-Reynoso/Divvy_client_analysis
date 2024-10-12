@@ -1,0 +1,147 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+```{r}
+library(corrplot)
+library(tidyverse)
+library(ggplot2)
+library(maps)
+library(ggmap)
+library(ggplot2)
+library(tmap)
+library(geosphere) 
+library(sf)
+```
+
+
+```{r}
+trips_df <- read_csv("../data/trips_data.csv")
+```
+#exploring the data
+
+
+```{r}
+head(trips_df)
+tail(trips_df)
+```
+
+
+```{r}
+cat("Dimensions:\n\n")
+dim(trips_df)
+cat("\nsummary:\n\n")
+summary(trips_df)
+```
+
+there seems to be missing values on end_lat, and end_lng. There are 6 categorical columns, rideable_type, and menber_casual, start_station_name/id, and end_station_name/id. There also seems to be an issue with end_lat were it has a minimum 0.00 and end_lng with a max of 0.00 this doesn't make sense since Chicago is around the values lattitude: 41.739685, longitude : -87.554420.
+
+
+##checking spread of the data 
+
+longitude and latitude data.
+```{r}
+ggplot(trips_df, aes(x = start_lat)) +
+    geom_histogram(fill = "blue", color = "black") +
+    labs(title = "Frequency Distribution of start_lat", x = "start_lat", y = "Frequency")
+
+ggplot(trips_df, aes(x = start_lng)) +
+    geom_histogram(fill = "blue", color = "black") +
+    labs(title = "Frequency Distribution of start_lng", x = "start_lng", y = "Frequency")
+
+ggplot(trips_df, aes(x = end_lat)) +
+    geom_histogram(fill = "blue", color = "black") +
+    labs(title = "Frequency Distribution of end_lat", x = "end_lat", y = "Frequency")
+
+ggplot(trips_df, aes(x = end_lng)) +
+    geom_histogram(fill = "blue", color = "black") +
+    labs(title = "Frequency Distribution of end_lng", x = "end_lng", y = "Frequency")
+```
+end_lng and end_lat seem to have outliers on them so That is another problem to consider.
+
+checking started_at and ended_at.
+```{r}
+ggplot(trips_df, aes(x = started_at)) +
+    geom_histogram(fill = "blue", color = "black") +
+    labs(title = "Frequency Distribution of started_at", x = "started_at", y = "Frequency")
+
+ggplot(trips_df, aes(x = ended_at)) +
+    geom_histogram(fill = "blue", color = "black") +
+    labs(title = "Frequency Distribution of ended_at", x = "ended_at", y = "Frequency")
+```
+This all seems in order less trips on january make sense since its very cold and both have around the same spread. As if a trip started it will end.
+
+checking ridable_type and menber_casual.
+```{r}
+ggplot(trips_df, aes(x = rideable_type)) +
+    geom_bar(fill = "skyblue", color = "black") +
+    labs(title = "Frequency of rideable_type Categories", x = "rideable_type", y = "Count")
+
+ggplot(trips_df, aes(x = member_casual)) +
+    geom_bar(fill = "skyblue", color = "black") +
+    labs(title = "Frequency of member_casual Categories", x = "member_casual", y = "Count")
+```
+There is a docked_bike. This is weird since when looking at the types of bike that divvy data gives. There is only classic and electric. This also seems to be a very small portion of the data. 
+
+```{r}
+trips_df %>%
+  select(everything()) %>%
+  filter(rideable_type == "docked_bike")
+```
+From what I could find out online this are supposed to be classic trips. However I don't want to just change them in case there is something important about them.
+
+
+Are all ids unique?
+```{r}
+trips_df %>%
+  filter(duplicated(.)) %>% 
+  count()
+```
+yes, they are all unique.
+
+
+
+
+
+##checking how much data is actually missing
+
+Before we saw that start_station_name, start_station_id, end_station_name and end_station_id, end_lng and end_lat are missing. I want to make sure I didn't miss anything before proceding to the cleaning. 
+
+```{r}
+trips_df %>%
+  select(everything()) %>%
+  summarise(across(everything(), ~sum(is.na(.))))
+```
+There doesn't seem to be any more columns missing. It also looks like ids and names are always missing at the same time. The same seems to be the case for end_lat and end_lng.
+
+
+##How is the missing data related?
+
+In the code bellow I am looking to see if there are cases where start_station_name and id are not missing at the same time. Then I am doing the same with end_station_name/id and end_lng/lat
+```{r}
+trips_df %>% 
+  select(start_station_id,end_station_id, start_station_name, end_station_name,end_lat,end_lng) %>%
+  filter(
+    (!complete.cases(start_station_name) & complete.cases(start_station_id)) 
+    | (!complete.cases(end_station_name) & complete.cases(end_station_id))
+    | (!complete.cases(end_lng) & complete.cases(end_lat))) %>% 
+  count()
+```
+With this I know that both start ids and start names are always missing at the same time as well as end ids are always missing at the same time as end names. Longitude and lattitudes are also always missing at the same time.
+
+
+With all of this information we know that there is are 3 chunks of data missing. One being end_lng and end_lat. The other one being start_station_id and start_station_name, and finally Finally we got end_station_id, and end_station_name.
+
+
+
+
+
+
+
+
+
+
+
+
+

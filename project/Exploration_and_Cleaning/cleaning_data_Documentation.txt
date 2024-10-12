@@ -1,0 +1,7 @@
+EDA.rmd(Exploratory Data Analisys): the initial data exploration occured here.
+
+Data_cleaning.rmd: here is where all the data cleaning occured.
+
+poblems_found.txt: has all the problems that were found on the EDA and fixed on the data cleaning file.
+
+trips_data_cleaned.csv: the data after being cleaned.

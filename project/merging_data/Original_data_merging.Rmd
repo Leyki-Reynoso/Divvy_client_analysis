@@ -1,0 +1,58 @@
+---
+title: "Data cleaning"
+output: html_notebook
+---
+
+##Libraries
+```{r}
+library(tidyverse)
+```
+
+For ease of analysis I want to combined the data into a single csv file. However I fisrt want to make sure that all of the files have the same structure to avoid issues.
+
+##Setting up files
+
+We first combine all of the files into a list.
+```{r}
+file_list <- list.files(path = "../data/unmerged_data", pattern = "*.csv", full.names = TRUE)
+# Read all CSV files into a list of dataframes
+trips_list <- lapply(file_list, read.csv)
+# Store the data frames in a list
+```
+
+
+Do all the data frames have the same column name?
+```{r}
+same_column_names <- all(sapply(trips_list, 
+                           function(df)
+                             all.equal(
+                               colnames(df), colnames(trips_list[[1]])
+                               )
+                           )
+                    )
+print(same_column_names)
+```
+
+
+Do all columns have the same data type?
+```{r}
+same_column_names <- all(sapply(trips_list, 
+                           function(df)
+                             all.equal(
+                               lapply(df, class), lapply(trips_list[[1]], class)
+                               )
+                           )
+                    )
+print(same_column_names)
+```
+
+The answer to both questions is yes. Now that we have confirmed that the columns are similar we can go ahead and combine the data frames into one.
+```{r}
+trips_df <- do.call(rbind, trips_list)
+```
+
+
+```{r}
+write.csv(trips_df, "../data/trips_data.csv", row.names = FALSE)
+```
+

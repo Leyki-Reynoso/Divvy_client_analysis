@@ -1,0 +1,295 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+The first thing to do it to find out how the hell to analyse data
+```{r}
+
+library(corrplot)
+library(tidyverse)
+library(ggplot2)
+library(maps)
+library(ggmap)
+library(tmap)
+library(geosphere)
+library(lubridate)
+library(sf)
+library(dplyr)
+library(lubridate)
+
+```
+
+
+
+```{r}
+trips_df <- read_csv("../data/trips_data_cleaned.csv")
+```
+The goal is to find how members and casual users differ in behavior. 
+
+#Lost bikes vs not lost bikes
+ 
+First question I have is with lost bikes. Do casuals lose more more bikes than members?
+
+```{r}
+trips_df_no_lost <- trips_df  %>% 
+  select(everything()) %>% 
+  filter(end_station_name != "Lost")
+```
+
+```{r}
+trips_df_lost <- trips_df  %>% 
+  select(everything()) %>% 
+  filter(end_station_name == "Lost")
+```
+
+```{r}
+ggplot(trips_df_no_lost, aes(x = member_casual, fill = rideable_type)) +
+    geom_bar(color = "black", position = "dodge") +
+    labs(title = "Frequency of member_casual Categoriess for not lost bikes", x = "member_casual", y = "Count")
+
+ggplot(trips_df_lost, aes(x = member_casual, fill = rideable_type)) +
+    geom_bar(color = "black", position = "dodge") +
+    labs(title = "Frequency of member_casual Categoriess for lost bikes", x = "member_casual", y = "Count")
+
+```
+Most of the lost bikes are used by casuals despite the casual population being about half of the member population. One thing to note is that for the lost bikes everything is red because only classic bikes can be lost since electric bikes have integrated GPS into them. 
+
+As a recommendation A good focus for future analysis is finding why casual users lose more bikes than members and use that for promoting the membership. Or find ways to avoid casual users from losing the bikes,
+
+
+#Analysing trip durations. 
+
+```{r}
+
+trips_df_no_lost %>%
+  select(member_casual, trip_duration) %>%  # Select only relevant columns
+  group_by(member_casual) %>%               # Group by member vs casual
+  summarise(
+    min_trip_duration = min(trip_duration, na.rm = TRUE),
+    first_quartile = quantile(trip_duration, 0.25, na.rm = TRUE),
+    median_trip_duration = median(trip_duration, na.rm = TRUE),
+    mean_trip_duration = mean(trip_duration, na.rm = TRUE),
+    third_quartile = quantile(trip_duration, 0.75, na.rm = TRUE),
+    max_trip_duration = max(trip_duration, na.rm = TRUE)
+  )
+
+```
+There are still some big outliers even removing trips that lasted 24 hours or longer. So I will use IQR to remove the outliers.
+
+```{r}
+Q1 <- quantile(trips_df_no_lost$trip_duration, 0.25)
+Q3 <- quantile(trips_df_no_lost$trip_duration, 0.75)
+IQR <- Q3 - Q1
+
+# Define outliers as values outside 1.5 * IQR from Q1 and Q3
+lower_bound <- Q1 - 1.5 * IQR
+upper_bound <- Q3 + 1.5 * IQR
+
+# Filter outliers
+trips_no_outliers <- trips_df_no_lost %>% filter(trip_duration > lower_bound & trip_duration < upper_bound)
+```
+
+
+```{r}
+
+trips_no_outliers %>%
+  select(member_casual, trip_duration) %>%  # Select only relevant columns
+  group_by(member_casual) %>%               # Group by member vs casual
+  summarise(
+    min_trip_duration = min(trip_duration, na.rm = TRUE),
+    first_quartile = quantile(trip_duration, 0.25, na.rm = TRUE),
+    median_trip_duration = median(trip_duration, na.rm = TRUE),
+    mean_trip_duration = mean(trip_duration, na.rm = TRUE),
+    third_quartile = quantile(trip_duration, 0.75, na.rm = TRUE),
+    max_trip_duration = max(trip_duration, na.rm = TRUE)
+  )
+
+```
+After removing ouliers all trips are bellow 35 minutes with some of them still being shorter than 1 minute. I don't have  minimum length for trips so I will work with this limit.
+
+```{r}
+trips_no_outliers %>% 
+  count()
+
+trips_df %>% 
+  count()
+
+```
+481,714 rows were removed .
+
+```{r}
+ggplot(trips_no_outliers, aes(x = member_casual, fill = rideable_type)) +
+    geom_bar(color = "black", position = "dodge") +
+    labs(title = "Frequency of member_casual Categoriess for not lost bikes", x = "member_casual", y = "Count")
+
+ggplot(trips_no_outliers, aes(x = trip_duration, fill = member_casual)) +
+  geom_histogram(position = "dodge") +
+  labs(title = "Trip Duration by Member vs. Casual Users (No Outliers)", x = "Trip Duration (Minutes)", y = "Count")
+
+ggplot(trips_no_outliers, aes(x = member_casual, y = trip_duration, fill = member_casual)) +
+  geom_boxplot() +
+  labs(title = "Trip duration by Member vs. Casual Users", y = "Trip duration (log Minutes)", x = "User Type")
+```
+
+```{r}
+
+start_station_medians <- trips_no_outliers %>%
+  group_by(start_station_name) %>%
+  summarise(
+    start_median_lat = median(start_lat, na.rm = TRUE),
+    start_median_lng = median(start_lng, na.rm = TRUE)
+  )
+
+end_station_medians <- trips_no_outliers %>%
+  group_by(end_station_name) %>%
+  summarise(
+    end_median_lat = median(end_lat, na.rm = TRUE),
+    end_median_lng = median(end_lng, na.rm = TRUE)
+  )
+
+# Classify stations into areas based on their median latitude and longitude
+start_station_area <- start_station_medians %>%
+  mutate(
+    start_area = case_when(
+      start_median_lat >= 41.90 & start_median_lng > -87.65 ~ "Northeast",    # North and East side (North Chicago)
+      start_median_lat >= 41.90 & start_median_lng <= -87.65 ~ "Northwest",   # North and West side
+      start_median_lat < 41.90 & start_median_lat >= 41.83 & start_median_lng > -87.65 ~ "Centraleast",  # Central area, East side
+      start_median_lat < 41.90 & start_median_lat >= 41.83 & start_median_lng <= -87.65 ~ "Centralwest", # Central area, West side
+      start_median_lat < 41.83 & start_median_lng > -87.65 ~ "Southeast",     # South and East side
+      start_median_lat < 41.83 & start_median_lng <= -87.65 ~ "Southwest"     # South and West side
+    )
+  )
+
+end_station_area <- end_station_medians %>%
+  mutate(
+    end_area = case_when(
+      end_median_lat >= 41.90 & end_median_lng > -87.65 ~ "Northeast",    # North and East side (North Chicago)
+      end_median_lat >= 41.90 & end_median_lng <= -87.65 ~ "Northwest",   # North and West side
+      end_median_lat < 41.90 & end_median_lat >= 41.83 & end_median_lng > -87.65 ~ "Centraleast",  # Central area, East side
+      end_median_lat < 41.90 & end_median_lat >= 41.83 & end_median_lng <= -87.65 ~ "Centralwest", # Central area, West side
+      end_median_lat < 41.83 & end_median_lng > -87.65 ~ "Southeast",     # South and East side
+      end_median_lat < 41.83 & end_median_lng <= -87.65 ~ "Southwest"     # South and West side
+    )
+  )
+
+# Merge the area classification back into the main dataset
+trips_df_no_lost <- trips_df_no_lost %>%
+  left_join(start_station_area, by = "start_station_name") %>%
+  left_join(end_station_area, by = "end_station_name")
+
+```
+
+
+```{r}
+
+start_area_percentages <- trips_no_outliers %>%
+  group_by(start_area, member_casual) %>%
+  summarise(count = n()) %>%
+  mutate(percentage = count / sum(count) * 100) %>%
+  ungroup()
+
+end_area_percentages <- trips_no_outliers %>%
+  group_by(end_area, member_casual) %>%
+  summarise(count = n()) %>%
+  mutate(percentage = count / sum(count) * 100) %>%
+  ungroup()
+
+```
+
+```{r}
+
+start_area_percentages
+end_area_percentages
+
+```
+
+```{r}
+
+
+ggplot(start_area_percentages, aes(x = start_area, y = count, fill = member_casual)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  ggtitle("End Stations by Area and User Type") +
+  xlab("start_area") +
+  ylab("Count") +
+  coord_flip() +
+  theme_minimal()
+
+ggplot(end_area_percentages, aes(x = end_area, y = count, fill = member_casual)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  ggtitle("End Stations by Area and User Type") +
+  xlab("end_area") +
+  ylab("Count") +
+  coord_flip() +
+  theme_minimal()
+
+```
+
+
+```{r}
+ggplot(trips_no_outliers, aes(x = started_at, fill = member_casual)) +
+    geom_histogram(position = "dodge", color = "black", bins = 30) +
+    labs(title = "Frequency Distribution of started_at (Member vs Casual)", 
+         x = "Started At", 
+         y = "Frequency", 
+         fill = "User Type") +
+    theme_minimal()
+
+ggplot(trips_no_outliers, aes(x = ended_at, fill = member_casual)) +
+    geom_histogram(position = "dodge", color = "black", bins = 30) +
+    labs(title = "Frequency Distribution of ended_at (Member vs Casual)", 
+         x = "Ended At", 
+         y = "Frequency", 
+         fill = "User Type") +
+    theme_minimal()
+```
+
+
+```{r}
+# Create columns for the day of the week
+trips_no_outliers <- trips_no_outliers %>%
+  mutate(started_day = wday(started_at, label = TRUE),
+         ended_day = wday(ended_at, label = TRUE))
+
+trips_df_no_lost
+```
+the behaviors in locations and times are similar accounting for the fact that casuals are half of members.
+
+```{r}
+
+# Create a season column based on the date
+trips_no_outliers <- trips_df_no_lost %>%
+  mutate(started_day = wday(started_at, label = TRUE),
+         season = case_when(
+           month(started_at) %in% c(12, 1, 2) ~ "Winter",
+           month(started_at) %in% c(3, 4, 5) ~ "Spring",
+           month(started_at) %in% c(6, 7, 8) ~ "Summer",
+           month(started_at) %in% c(9, 10, 11) ~ "Fall"
+         ))
+
+# Calculate average trip duration for each day, season, and user type
+average_trip_duration <- trips_no_outliers %>%
+  group_by(started_day, season, member_casual) %>%
+  summarise(avg_duration = mean(trip_duration, na.rm = TRUE)) %>%
+  ungroup()
+
+# Plot average trip duration by day of the week, season, and user type as a line graph
+ggplot(average_trip_duration, aes(x = started_day, y = avg_duration, color = member_casual, group = member_casual)) +
+  geom_line(size = 1) +
+  geom_point(size = 2) +
+  facet_wrap(~ season) +
+  labs(title = "Average Trip Duration by Day of the Week, Season, and User Type", 
+       x = "Day of the Week", 
+       y = "Average Trip Duration (minutes)", 
+       color = "User Type") +
+  theme_minimal() +
+  scale_color_manual(values = c("member" = "blue", "casual" = "red"))
+
+```
+Causal drivers have longer trips they also have an increase in times on weekends. Although members also have increase in weekends is not as significant. Another thing to notice is that on the summer there is an over all growth for everything with a big increase on the weekend numbers. 
+
+1. Focus on the casual drives on the week days. Even though not as significant as the weekends was there are a number of them and they do have longer trips than their member counterparts. We can advertise the low fee per minute that the membership offers. as well as the free unlocks
+
+2. Focus on the weekend and summer riders and offer a service that could substitute the yearly subscription 
+
+3. Lastly we can focus on the weekend drivers. Even though they do not use it as often if they use it every week they could still benefit from the subscription. We can advertise from that angle. 

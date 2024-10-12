@@ -1,0 +1,10 @@
+Exploration_and_cleaning(Folder): The cleaning reports are here.
+
+Unmerged_data(Folder): The data was divided by months on different csvs originally. 
+Here you can access all of that dat.
+
+Merged_data(folder): This folder contains the merged data as well as the code that merged it.
+
+Analysis_and_visualization(Folder): This folder contains the R file where the dat was analysed as well as any powerpoint needed for this.
+
+data(Folder): contains all the data in the project.

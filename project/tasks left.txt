@@ -1,5 +1,0 @@
-Rewrite and fix any issues on the cleaning.
-
-Analyse the data. 
-
-Visualize the data.

@@ -174,7 +174,7 @@ end_station_area <- end_station_medians %>%
   )
 
 # Merge the area classification back into the main dataset
-trips_df_no_lost <- trips_df_no_lost %>%
+trips_no_outliers <- trips_no_outliers %>%
   left_join(start_station_area, by = "start_station_name") %>%
   left_join(end_station_area, by = "end_station_name")
 
@@ -199,8 +199,10 @@ end_area_percentages <- trips_no_outliers %>%
 
 ```{r}
 
-start_area_percentages
-end_area_percentages
+start_area_percentages %>% 
+  select()
+end_area_percentages %>% 
+  select()
 
 ```
 
